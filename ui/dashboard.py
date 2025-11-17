@@ -1,143 +1,93 @@
-# ui/dashboard.py
-# High-level overview dashboard for AraUltra
-
-from __future__ import annotations
-
 from PyQt6.QtWidgets import (
-    QWidget, QVBoxLayout, QLabel, QHBoxLayout, QFrame
+    QWidget,
+    QVBoxLayout,
+    QLabel,
+    QListWidget,
+    QFrame,
+    QHBoxLayout
 )
 from PyQt6.QtCore import Qt
-
-from core.findings import findings_store
-from core.issues_store import issues_store
-from core.risk import risk_engine
-
-class StatCard(QFrame):
-    def __init__(self, title: str, value: str):
-        super().__init__()
-        self.setFrameShape(QFrame.Shape.StyledPanel)
-        self.setStyleSheet("QFrame { background-color: #252526; border-radius: 8px; }")
-
-        layout = QVBoxLayout(self)
-        layout.setContentsMargins(12, 10, 12, 10)
-
-        title_lbl = QLabel(title)
-        title_lbl.setStyleSheet("color: #a0a0a0; font-size: 12px;")
-        value_lbl = QLabel(value)
-        value_lbl.setStyleSheet("color: #ffffff; font-size: 24px; font-weight: bold;")
-
-        layout.addWidget(title_lbl)
-        layout.addWidget(value_lbl)
-        layout.addStretch()
-
-        self._value_lbl = value_lbl
-
-    def set_value(self, value: str):
-        self._value_lbl.setText(value)
+from datetime import datetime
 
 
-class DashboardView(QWidget):
-    def __init__(self):
-        super().__init__()
+class DashboardPanel(QWidget):
+    """
+    High-level overview and recent activity feed.
+    """
 
-        layout = QVBoxLayout(self)
-        layout.setContentsMargins(16, 16, 16, 16)
-        layout.setSpacing(16)
+    def __init__(self, parent=None):
+        super().__init__(parent)
 
-        title = QLabel("Overview")
+        main_layout = QVBoxLayout()
+        main_layout.setContentsMargins(16, 16, 16, 16)
+        main_layout.setSpacing(12)
+
+        title = QLabel("Dashboard")
         title.setStyleSheet("font-size: 20px; font-weight: bold;")
-        layout.addWidget(title)
+        main_layout.addWidget(title)
 
-        # Stats row
-        stats_row = QHBoxLayout()
-        stats_row.setSpacing(16)
+        subtitle = QLabel("High-level view of active scans, new findings, and system status.")
+        subtitle.setStyleSheet("color: #aaaaaa;")
+        main_layout.addWidget(subtitle)
 
-        self.card_targets = StatCard("Targets Scanned", "0")
-        self.card_findings = StatCard("Total Findings", "0")
-        self.card_high = StatCard("High/Critical", "0")
+        # Cards container
+        cards_layout = QHBoxLayout()
+        cards_layout.setSpacing(12)
 
-        stats_row.addWidget(self.card_targets)
-        stats_row.addWidget(self.card_findings)
-        stats_row.addWidget(self.card_high)
-        stats_row.addStretch()
+        self.status_card = self._build_card("System Status", "Idle")
+        self.scan_card = self._build_card("Active Scans", "0")
+        self.findings_card = self._build_card("Total Findings", "0")
 
-        layout.addLayout(stats_row)
-        layout.addStretch()
+        cards_layout.addWidget(self.status_card)
+        cards_layout.addWidget(self.scan_card)
+        cards_layout.addWidget(self.findings_card)
 
-        self.refresh()
+        main_layout.addLayout(cards_layout)
 
-    def refresh(self):
-        # Simple derived stats from findings_store
-        findings = findings_store.get_all()
-        total = len(findings)
-        high = sum(1 for f in findings if f["severity"] in ("HIGH", "CRITICAL"))
-        targets = len({f["target"] for f in findings})
+        # Recent events
+        events_label = QLabel("Recent Activity")
+        events_label.setStyleSheet("margin-top: 12px; font-weight: bold;")
+        main_layout.addWidget(events_label)
 
-        self.card_targets.set_value(str(targets))
-        self.card_findings.set_value(str(total))
-        self.card_high.set_value(str(high))
+        self.events_list = QListWidget()
+        self.events_list.setStyleSheet("background-color: #181818; border: 1px solid #333333;")
+        main_layout.addWidget(self.events_list)
 
-class Dashboard(QWidget):
-    def __init__(self):
-        super().__init__()
+        self.setLayout(main_layout)
 
-        layout = QVBoxLayout(self)
-        layout.setSpacing(12)
+    def _build_card(self, title: str, value: str) -> QFrame:
+        card = QFrame()
+        card.setObjectName("Card")
+        layout = QVBoxLayout()
+        layout.setContentsMargins(12, 12, 12, 12)
+        layout.setSpacing(4)
 
-        self.status_label = QLabel("Status: Idle")
-        self.status_label.setStyleSheet("color: #cccccc; font-size: 14px;")
+        title_label = QLabel(title)
+        title_label.setStyleSheet("font-size: 12px; color: #bbbbbb;")
 
-        self.total_label = QLabel("Total Findings: 0")
-        self.high_label = QLabel("High/Critical: 0")
-        self.issues_label = QLabel("Correlated Issues: 0")
-        self.issues_label.setStyleSheet("color:#ffffff; font-size:16px;")
-        self.critical_label = QLabel("Critical Issues: 0 | High Issues: 0")
-        self.critical_label.setStyleSheet("color:#ffb347; font-size:14px;")
-        self.asset_summary = QLabel("Top Assets:\n—")
-        self.asset_summary.setWordWrap(True)
-        self.asset_summary.setStyleSheet("color:#dddddd; font-size:13px;")
+        value_label = QLabel(value)
+        value_label.setStyleSheet("font-size: 22px; font-weight: bold;")
 
-        for lbl in (self.total_label, self.high_label):
-            lbl.setStyleSheet("color: #ffffff; font-size: 22px; font-weight: bold;")
+        layout.addWidget(title_label)
+        layout.addWidget(value_label)
+        layout.addStretch(1)
 
-        layout.addWidget(self.status_label)
-        layout.addWidget(self.total_label)
-        layout.addWidget(self.high_label)
+        card.setLayout(layout)
+        card.value_label = value_label  # store for updates
+        return card
 
-        issue_row = QHBoxLayout()
-        issue_row.addWidget(self.issues_label)
-        issue_row.addWidget(self.critical_label)
-        issue_row.addStretch()
-        layout.addLayout(issue_row)
+    def add_recent_event(self, text: str):
+        timestamp = datetime.now().strftime("%H:%M:%S")
+        self.events_list.insertItem(0, f"[{timestamp}] {text}")
+        # keep it from growing unbounded
+        if self.events_list.count() > 200:
+            self.events_list.takeItem(self.events_list.count() - 1)
 
-        layout.addWidget(self.asset_summary)
-        layout.addStretch()
+    def set_system_status(self, text: str):
+        self.status_card.value_label.setText(text)
 
-    def set_scanning(self, scanning: bool):
-        if scanning:
-            self.status_label.setText("Status: SCANNING…")
-            self.status_label.setStyleSheet("color: #ffcc00; font-size: 14px;")
-        else:
-            self.status_label.setText("Status: Idle")
-            self.status_label.setStyleSheet("color: #cccccc; font-size: 14px;")
+    def set_active_scans(self, count: int):
+        self.scan_card.value_label.setText(str(count))
 
-    def update_metrics(self, findings):
-        total = len(findings)
-        high = sum(1 for f in findings if f.get("severity") in ("HIGH", "CRITICAL"))
-
-        self.total_label.setText(f"Total Findings: {total}")
-        self.high_label.setText(f"High/Critical: {high}")
-        issues = issues_store.get_all()
-        crit = sum(1 for issue in issues if str(issue.get("severity", "")).upper() == "CRITICAL")
-        high_issue = sum(1 for issue in issues if str(issue.get("severity", "")).upper() == "HIGH")
-        self.issues_label.setText(f"Correlated Issues: {len(issues)}")
-        self.critical_label.setText(f"Critical Issues: {crit} | High Issues: {high_issue}")
-        self.asset_summary.setText(self._format_top_assets())
-
-    def _format_top_assets(self, limit: int = 3) -> str:
-        scores = risk_engine.get_scores()
-        if not scores:
-            return "Top Assets:\n—"
-        top = sorted(scores.items(), key=lambda kv: kv[1], reverse=True)[:limit]
-        lines = [f"{idx + 1}. {asset} — score {score:.1f}" for idx, (asset, score) in enumerate(top)]
-        return "Top Assets:\n" + "\n".join(lines)
+    def set_total_findings(self, count: int):
+        self.findings_card.value_label.setText(str(count))

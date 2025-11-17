@@ -1,49 +1,18 @@
-# core/killchain_store.py — killchain edge storage
-
-from __future__ import annotations
-
-from PyQt6.QtCore import QObject, pyqtSignal
-import threading
-from typing import List
-
-
-class KillChainStore(QObject):
-    edges_changed = pyqtSignal()
+class KillchainStore:
+    """
+    Tracks the MITRE Kill Chain phases triggered by discovered findings.
+    Simple and extensible store used by TaskRouter and the UI.
+    """
 
     def __init__(self):
-        super().__init__()
-        self._lock = threading.Lock()
-        self._edges: List[dict] = []
+        self.phases = set()
 
-    def add(self, edge: dict):
-        with self._lock:
-            self._edges.append(edge)
-        self.edges_changed.emit()
+    def add_phase(self, phase: str):
+        self.phases.add(phase)
 
-    def bulk_add(self, edges: List[dict]):
-        if not edges:
-            return
-        with self._lock:
-            self._edges.extend(edges)
-        self.edges_changed.emit()
-
-    def replace_all(self, edges: List[dict]):
-        with self._lock:
-            self._edges = list(edges)
-        self.edges_changed.emit()
-
-    def clear(self):
-        with self._lock:
-            self._edges.clear()
-        self.edges_changed.emit()
-
-    def get_all(self) -> List[dict]:
-        with self._lock:
-            return list(self._edges)
-
-    def get_by_asset(self, asset: str) -> List[dict]:
-        with self._lock:
-            return [edge for edge in self._edges if edge.get("source") == asset or edge.get("target") == asset]
+    def get_phases(self):
+        return sorted(list(self.phases))
 
 
-killchain_store = KillChainStore()
+# Singleton
+killchain_store = KillchainStore()

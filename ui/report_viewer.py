@@ -1,86 +1,48 @@
-# ui/report_viewer.py
-# Bug bounty style report generator / viewer
-
-from __future__ import annotations
-
 from PyQt6.QtWidgets import (
-    QWidget, QVBoxLayout, QPushButton,
-    QSplitter, QPlainTextEdit, QTextBrowser
+    QWidget,
+    QVBoxLayout,
+    QLabel,
+    QPlainTextEdit,
+    QPushButton
 )
-from PyQt6.QtCore import Qt, QThread, pyqtSignal
-
-from core.ai_engine import ai_engine
-from core.reporting import create_report_bundle
-
-
-class ReportWorker(QThread):
-    report_ready = pyqtSignal(str)
-
-    def run(self):
-        text = ai_engine.generate_report()
-        self.report_ready.emit(text)
+from PyQt6.QtCore import Qt
 
 
 class ReportViewer(QWidget):
-    def __init__(self):
-        super().__init__()
+    """
+    Displays generated reports or allows previewing report drafts.
+    Currently a simple text viewer with a 'refresh' hook.
+    """
 
-        self.worker: ReportWorker | None = None
+    def __init__(self, parent=None):
+        super().__init__(parent)
 
-        layout = QVBoxLayout(self)
-        layout.setContentsMargins(16, 16, 16, 16)
-        layout.setSpacing(8)
+        main_layout = QVBoxLayout()
+        main_layout.setContentsMargins(16, 16, 16, 16)
+        main_layout.setSpacing(10)
 
-        self.btn_generate = QPushButton("Generate Report from Findings")
-        self.btn_generate.clicked.connect(self.generate_report)
-        layout.addWidget(self.btn_generate)
+        title = QLabel("Report Viewer")
+        title.setStyleSheet("font-size: 20px; font-weight: bold;")
+        main_layout.addWidget(title)
 
-        self.btn_bundle = QPushButton("Export Report Bundle")
-        self.btn_bundle.clicked.connect(self.export_bundle)
-        layout.addWidget(self.btn_bundle)
+        subtitle = QLabel("Preview and refine engagement reports.")
+        subtitle.setStyleSheet("color: #aaaaaa;")
+        main_layout.addWidget(subtitle)
 
-        splitter = QSplitter(Qt.Orientation.Horizontal)
-        layout.addWidget(splitter, stretch=1)
+        self.refresh_btn = QPushButton("Refresh Report")
+        self.refresh_btn.clicked.connect(self.refresh_report)
+        main_layout.addWidget(self.refresh_btn)
 
-        # Raw markdown/text view
-        self.raw_view = QPlainTextEdit()
-        self.raw_view.setReadOnly(True)
-        self.raw_view.setStyleSheet("QPlainTextEdit { background-color: #1e1e1e; }")
+        self.text = QPlainTextEdit()
+        self.text.setReadOnly(True)
+        self.text.setPlaceholderText("Generated reports will appear here once reporting is wired into the backend.")
+        main_layout.addWidget(self.text, stretch=1)
 
-        # Rendered preview
-        self.html_view = QTextBrowser()
-        self.html_view.setOpenExternalLinks(True)
+        self.setLayout(main_layout)
 
-        splitter.addWidget(self.raw_view)
-        splitter.addWidget(self.html_view)
-        splitter.setStretchFactor(0, 2)
-        splitter.setStretchFactor(1, 3)
-
-    def generate_report(self):
-        if self.worker and self.worker.isRunning():
-            self.raw_view.appendPlainText("[Report] Already generating...")
-            return
-
-        self.raw_view.appendPlainText("[Report] Generating report...")
-        self.worker = ReportWorker()
-        self.worker.report_ready.connect(self.on_report_ready)
-        self.worker.start()
-
-    def on_report_ready(self, text: str):
-        self.raw_view.appendPlainText("\n[Report Generated]\n")
-        self.raw_view.appendPlainText(text)
-
-        # Quick-and-dirty markdown-ish to HTML
-        html = (
-            "<html><body style='background-color:#1e1e1e; color:#ffffff; font-family:Menlo,monospace;'>"
-            + text.replace("\n", "<br>")
-            + "</body></html>"
-        )
-        self.html_view.setHtml(html)
-
-    def export_bundle(self):
-        self.raw_view.appendPlainText("[Report] Exporting bundle...")
-        bundle = create_report_bundle()
-        self.raw_view.appendPlainText(
-            f"[Report] Bundle created at {bundle.folder}\n - {bundle.markdown_path}\n - {bundle.json_path}\n"
-        )
+    def refresh_report(self):
+        """
+        Invoked when the user clicks 'Refresh Report'.
+        For now, just drops a stub message. Backend can later load a real report.
+        """
+        self.text.appendPlainText("[report] Report refresh requested. Backend integration pending.\n")

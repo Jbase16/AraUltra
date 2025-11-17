@@ -8,6 +8,18 @@ from copy import deepcopy
 from pathlib import Path
 from urllib.parse import urlparse, urlunparse
 from typing import Dict, List
+from .tool_shims.nmap import NmapScan
+from .tool_shims.subfinder import Subfinder
+from .tool_shims.httpx import Httpx
+
+TOOLS = {
+    "nmap": NmapScan(),
+    "subfinder": Subfinder(),
+    "httpx": Httpx(),
+    "hakrevdns": None,  # Placeholder for now
+    
+    # Add more tools here as needed
+}
 
 ToolDef = Dict[str, object]
 
@@ -277,3 +289,17 @@ def get_tool_command(name: str, target: str, override: ToolDef | None = None) ->
         else:
             cmd.append(part)
     return cmd
+
+
+from .task_router import TaskRouter
+
+def tool_callback_factory(tool_name: str):
+    def callback(stdout, stderr, rc, metadata):
+        TaskRouter.instance().handle_tool_output(
+            tool_name=tool_name,
+            stdout=stdout,
+            stderr=stderr,
+            rc=rc,
+            metadata=metadata
+        )
+    return callback

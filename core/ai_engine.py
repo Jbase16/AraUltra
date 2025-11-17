@@ -1,162 +1,119 @@
-# core/ai_engine.py
-# Ollama-based AI assistant for analysis and reporting (defensive / descriptive only)
-
-from __future__ import annotations
-
 import json
-from typing import List, Dict, Any, Optional
+from typing import Dict, List
 
-import requests
-
-from core.findings import findings_store
-from core.reasoning import reasoning_engine
-
-OLLAMA_URL = "http://localhost:11434/api/generate"
-MODEL_NAME = "llama3.2:3b"  # adjust if you use another model
+from core.findings_store import findings_store
+from core.killchain_store import killchain_store
+from core.evidence_store import EvidenceStore
 
 
 class AIEngine:
-    def __init__(self, base_url: str = OLLAMA_URL, model: str = MODEL_NAME):
-        self.base_url = base_url
-        self.model = model
+    """
+    Central analysis engine.
+    Responsible for:
+      - Summarizing tool output
+      - Extracting findings
+      - Mapping findings to killchain
+      - Storing structured evidence
+    """
 
-    def _generate(self, prompt: str, temperature: float = 0.2, max_tokens: int = 1024) -> str:
+    _instance = None
+
+    @staticmethod
+    def instance():
+        if AIEngine._instance is None:
+            AIEngine._instance = AIEngine()
+        return AIEngine._instance
+
+    # ---------------------------------------------------------
+    # Main AI processing entrypoint
+    # ---------------------------------------------------------
+    def process_tool_output(self, tool_name: str, stdout: str, stderr: str, rc: int, metadata: Dict):
         """
-        Call Ollama /api/generate with a prompt.
+        Primary handler for all tool outputs.
+        Called automatically by TaskRouter.
         """
-        payload = {
-            "model": self.model,
-            "prompt": prompt,
-            "stream": False,
-            "options": {
-                "temperature": temperature,
-                "num_predict": max_tokens,
-            },
+
+        # Step 1: store raw evidence
+        evidence_id = EvidenceStore.instance(
+            tool=tool_name,
+            raw_output=stdout,
+            metadata=metadata
+        )
+
+        # Step 2: generate summary
+        summary = self._summarize_output(tool_name, stdout)
+
+        # Step 3: extract findings
+        findings = self._extract_findings(tool_name, stdout)
+
+        # Step 4: map killchain phases
+        phases = self._infer_killchain_phases(findings)
+
+        # Step 5: update stores
+        for f in findings:
+            findings_store.add_finding(f)
+
+        for p in phases:
+            killchain_store.add_phase(p)
+
+        # Step 6: update evidence with summary/findings
+        EvidenceStore.instance().update_evidence(
+            evidence_id,
+            summary=summary,
+            findings=findings
+        )
+
+        return {
+            "summary": summary,
+            "findings": findings,
+            "killchain_phases": phases,
+            "evidence_id": evidence_id
         }
-        try:
-            resp = requests.post(self.base_url, json=payload, timeout=180)
-            resp.raise_for_status()
-            data = resp.json()
-            return data.get("response", "").strip() or "AI returned an empty response."
-        except Exception as e:
-            return f"AI ERROR: {e}"
 
-    def summarize_findings(self) -> str:
+    # ---------------------------------------------------------
+    # AI simulation (replace with real OpenAI / Ollama later)
+    # ---------------------------------------------------------
+    def _summarize_output(self, tool: str, output: str) -> str:
+        if not output.strip():
+            return f"No meaningful output from {tool}."
+
+        # Fake summary for now — replace with LLM call later.
+        return f"{tool} executed successfully. Output length: {len(output)} characters."
+
+    def _extract_findings(self, tool: str, output: str) -> List[Dict]:
         """
-        Provide a high-level, defensive, bug-bounty-style summary of all findings.
-        No exploit payloads, only descriptions, risk context, and mitigation.
+        Very primitive placeholder. Soon: use GPT for extraction.
         """
-        all_findings = findings_store.get_all()
-        reasoning_data = reasoning_engine.analyze()
-        if not all_findings and not reasoning_data.get("issues"):
-            return "No findings available for analysis."
+        findings = []
 
-        findings_json = json.dumps(all_findings, indent=2)
-        reasoning_json = json.dumps(reasoning_data, indent=2)
-        prompt = f"""
-        You are a senior application security engineer.
+        if "open" in output.lower():
+            findings.append({
+                "tool": tool,
+                "type": "open_port",
+                "value": "Detected reference to 'open' in output.",
+                "severity": "medium"
+            })
 
-        You are given a list of reconnaissance findings from a security scanner.
-        Your job is to:
+        if "error" in output.lower():
+            findings.append({
+                "tool": tool,
+                "type": "tool_error",
+                "value": "Detected errors in output.",
+                "severity": "low"
+            })
 
-        1. Group the findings by vulnerability TYPE and SEVERITY.
-        2. Explain, in high-level terms, what each issue means in the context of web security.
-        3. Describe realistic risk and impact in a bug bounty context.
-        4. Suggest defensive mitigations and hardening steps.
-        5. DO NOT provide exploit code, payloads, or step-by-step attack instructions.
-           Focus purely on description, risk, and remediation.
+        return findings
 
-        Findings (JSON):
-        {findings_json}
-
-        Reasoning context (attack paths, recommendations, correlated issues):
-        {reasoning_json}
+    def _infer_killchain_phases(self, findings: List[Dict]) -> List[str]:
         """
-
-        return self._generate(prompt)
-
-    def generate_report(self) -> str:
+        Maps findings to MITRE killchain phases.
         """
-        Generate a full bug-bounty-style report (markdown-like text).
-        Again: descriptive, defensive, no exploit payloads.
-        """
-        all_findings = findings_store.get_all()
-        reasoning_data = reasoning_engine.analyze()
-        if not all_findings and not reasoning_data.get("issues"):
-            return "# AraUltra Report\n\nNo findings to report."
+        phases = set()
 
-        findings_json = json.dumps(all_findings, indent=2)
-        reasoning_json = json.dumps(reasoning_data, indent=2)
-        prompt = f"""
-        You are a security engineer writing a professional bug bounty report.
+        for f in findings:
+            if f["type"] == "open_port":
+                phases.add("Reconnaissance")
+            if f["type"] == "tool_error":
+                phases.add("Resource Development")
 
-        You will receive a list of structured findings from a recon engine.
-        Produce a single markdown-style report that includes:
-
-        - Executive Summary
-        - Scope (targets)
-        - Methodology (recon tools, passive analysis)
-        - Detailed Findings:
-          - Title
-          - Severity
-          - A short description of the issue class
-          - Observed evidence (from the findings)
-          - Impact (business and technical)
-          - Likelihood
-          - Remediation Recommendations
-        - Overall Risk & Hardening Recommendations
-
-        Very important rules:
-        - DO NOT include any exploit payloads or step-by-step exploit chains.
-        - DO NOT show concrete injection strings, shell commands, or weaponized content.
-        - You may talk about classes of issues (e.g. SQL injection, XSS) at a high-level only.
-        - Focus on helping defenders understand and fix issues.
-
-        Findings (JSON):
-        {findings_json}
-
-        Reasoning context (attack paths, degraded paths, recommended phases, correlated issues):
-        {reasoning_json}
-        """
-
-        return self._generate(prompt, max_tokens=2048)
-
-    def answer_custom_question(self, question: str) -> str:
-        """
-        Allow the user to ask a question in the context of current findings.
-        """
-        all_findings = findings_store.get_all()
-        findings_json = json.dumps(all_findings, indent=2)
-        reasoning_json = json.dumps(reasoning_engine.analyze(), indent=2)
-
-        prompt = f"""
-        You are a senior security engineer.
-
-        The user will ask a question about a target or set of findings.
-        You may reference the existing findings when useful.
-
-        Constraints:
-        - Answer in a concise, practical way.
-        - Focus on risk, triage, and defense.
-        - DO NOT provide exploit payloads or exploit automation.
-        - It is okay to explain web security concepts, but avoid weaponized detail.
-
-        Current findings (JSON, may be empty):
-        {findings_json}
-
-        Correlation/reasoning context:
-        {reasoning_json}
-
-        User question:
-        {question}
-        """
-
-        return self._generate(prompt, max_tokens=1024)
-
-    def reasoning_snapshot(self) -> Dict[str, object]:
-        """Expose structured reasoning data for UI layers."""
-        return reasoning_engine.analyze()
-
-
-# global instance
-ai_engine = AIEngine()
+        return list(phases)
