@@ -101,6 +101,13 @@ def _parse_version(raw: str) -> Tuple[int, ...]:
     return tuple(int(n) for n in nums[:3])
 
 
+ANSI_RE = re.compile(r"\x1B\[[0-?]*[ -/]*[@-~]")
+
+
+def _strip_ansi(text: str) -> str:
+    return ANSI_RE.sub("", text or "")
+
+
 @dataclass
 class RawFinding:
     type: str
@@ -269,6 +276,345 @@ def _handle_wafw00f(target: str, output: str) -> List[RawFinding]:
             metadata={"waf": waf_name},
         )
     ]
+
+
+def _handle_httpx(target: str, output: str) -> List[RawFinding]:
+    findings: List[RawFinding] = []
+    pattern = re.compile(r"(https?://\S+)\s+\[(\d{3})\]\s*(?:\[(.*?)\])?\s*(?:\[(.*?)\])?")
+    for raw in output.splitlines():
+        clean = _strip_ansi(raw).strip()
+        if not clean.startswith("http"):
+            continue
+        match = pattern.match(clean)
+        if not match:
+            continue
+        url = match.group(1)
+        status = int(match.group(2))
+        title = (match.group(3) or "").strip()
+        tech = (match.group(4) or "").strip()
+        severity = "INFO"
+        if status >= 500:
+            severity = "HIGH"
+        elif status >= 400:
+            severity = "MEDIUM"
+        findings.append(
+            RawFinding(
+                type="HTTP Endpoint",
+                severity=severity,
+                tool="httpx",
+                target=target,
+                message=f"{url} returned {status}",
+                proof=clean,
+                tags=["surface-http", f"status-{status}"],
+                families=["exposure"],
+                metadata={"url": url, "status": status, "title": title, "tech": tech},
+            )
+        )
+    return findings
+
+
+def _handle_dirsearch(target: str, output: str) -> List[RawFinding]:
+    findings: List[RawFinding] = []
+    pattern = re.compile(r"(\d{3})\s*-\s*[^\-]*-\s*(\S+)(?:\s*->\s*(\S+))?")
+    for raw in output.splitlines():
+        clean = _strip_ansi(raw).strip()
+        match = pattern.search(clean)
+        if not match:
+            continue
+        status = int(match.group(1))
+        url = match.group(2)
+        redirect = match.group(3)
+        findings.append(
+            RawFinding(
+                type="Hidden Directory",
+                severity="MEDIUM" if status < 400 else "LOW",
+                tool="dirsearch",
+                target=target,
+                message=f"{url} (status {status})",
+                proof=clean,
+                tags=["dir-enum", "surface-http"],
+                families=["exposure"],
+                metadata={"status": status, "redirect": redirect},
+            )
+        )
+    return findings
+
+
+def _handle_gobuster(target: str, output: str) -> List[RawFinding]:
+    findings: List[RawFinding] = []
+    pattern = re.compile(r"^([^\s]+)\s+\(Status:\s*(\d{3})\)")
+    for raw in output.splitlines():
+        clean = _strip_ansi(raw).strip()
+        match = pattern.match(clean)
+        if not match:
+            continue
+        path = match.group(1)
+        status = int(match.group(2))
+        findings.append(
+            RawFinding(
+                type="Brute Forced Path",
+                severity="MEDIUM",
+                tool="gobuster",
+                target=target,
+                message=f"{path} (status {status})",
+                proof=clean,
+                tags=["dir-enum", "surface-http"],
+                families=["exposure"],
+                metadata={"status": status, "path": path},
+            )
+        )
+    return findings
+
+
+def _handle_feroxbuster(target: str, output: str) -> List[RawFinding]:
+    findings: List[RawFinding] = []
+    pattern = re.compile(r"^(\d{3})\s+\S+\s+\S+\s+(https?://\S+)")
+    for raw in output.splitlines():
+        clean = _strip_ansi(raw).strip()
+        match = pattern.match(clean)
+        if not match:
+            continue
+        status = int(match.group(1))
+        url = match.group(2)
+        findings.append(
+            RawFinding(
+                type="Recursive Discovery",
+                severity="MEDIUM",
+                tool="feroxbuster",
+                target=target,
+                message=f"{url} (status {status})",
+                proof=clean,
+                tags=["dir-enum", "surface-http"],
+                families=["exposure"],
+                metadata={"status": status, "url": url},
+            )
+        )
+    return findings
+
+
+def _handle_nikto(target: str, output: str) -> List[RawFinding]:
+    findings: List[RawFinding] = []
+    pattern = re.compile(r"\[nikto-shim\]\s+([A-Z]+):\s+(.*)")
+    for line in output.splitlines():
+        clean = _strip_ansi(line).strip()
+        match = pattern.match(clean)
+        if not match:
+            continue
+        severity = match.group(1).upper()
+        message = match.group(2).strip()
+        findings.append(
+            RawFinding(
+                type="Nikto Finding",
+                severity=severity if severity in {"LOW", "MEDIUM", "HIGH", "CRITICAL"} else "INFO",
+                tool="nikto",
+                target=target,
+                message=message,
+                proof=clean,
+                tags=["web-scanner", "nikto"],
+                families=["exposure", "misconfiguration"],
+            )
+        )
+    return findings
+
+
+def _handle_masscan(target: str, output: str) -> List[RawFinding]:
+    findings: List[RawFinding] = []
+    pattern = re.compile(r"Discovered open port (\d+)/(tcp|udp) on ([^\s]+)")
+    for line in output.splitlines():
+        match = pattern.search(line)
+        if not match:
+            continue
+        port = int(match.group(1))
+        proto = match.group(2)
+        host = match.group(3)
+        findings.append(
+            RawFinding(
+                type="Open Port",
+                severity="MEDIUM" if port in ManagementPortMap else "LOW",
+                tool="masscan",
+                target=target,
+                message=f"{host}:{port}/{proto}",
+                proof=line.strip(),
+                tags=["exposure", "masscan"],
+                families=["exposure"],
+                metadata={"port": port, "protocol": proto, "host": host},
+            )
+        )
+    return findings
+
+
+def _handle_naabu(target: str, output: str) -> List[RawFinding]:
+    findings: List[RawFinding] = []
+    for line in output.splitlines():
+        clean = _strip_ansi(line).strip()
+        if ":" not in clean or clean.startswith("["):
+            continue
+        host, _, port_str = clean.partition(":")
+        if not port_str.isdigit():
+            continue
+        port = int(port_str)
+        findings.append(
+            RawFinding(
+                type="Open Port",
+                severity="MEDIUM" if port in ManagementPortMap else "LOW",
+                tool="naabu",
+                target=target,
+                message=f"{host}:{port}",
+                proof=clean,
+                tags=["exposure", "surface-expansion"],
+                families=["exposure"],
+                metadata={"port": port, "host": host},
+            )
+        )
+    return findings
+
+
+def _handle_dnsx(target: str, output: str) -> List[RawFinding]:
+    findings: List[RawFinding] = []
+    pattern = re.compile(r"([^\s]+)\s+\[(\w+)\]\s+\[([^\]]+)\]")
+    for line in output.splitlines():
+        clean = _strip_ansi(line).strip()
+        match = pattern.search(clean)
+        if not match:
+            continue
+        host, record_type, value = match.groups()
+        findings.append(
+            RawFinding(
+                type="DNS Record",
+                severity="INFO",
+                tool="dnsx",
+                target=target,
+                message=f"{host} {record_type} {value}",
+                proof=clean,
+                tags=["dns", "surface-mapping"],
+                families=["recon-phase:dns"],
+            )
+        )
+    return findings
+
+
+def _handle_hakrevdns(target: str, output: str) -> List[RawFinding]:
+    findings: List[RawFinding] = []
+    pattern = re.compile(r"\[hakrevdns-shim\]\s+([^\s]+)\s*->\s*(.*)")
+    for line in output.splitlines():
+        clean = _strip_ansi(line).strip()
+        match = pattern.match(clean)
+        if not match:
+            continue
+        ip = match.group(1)
+        ptr = match.group(2)
+        findings.append(
+            RawFinding(
+                type="Reverse DNS Mapping",
+                severity="INFO",
+                tool="hakrevdns",
+                target=target,
+                message=f"{ip} -> {ptr}",
+                proof=clean,
+                tags=["dns", "surface-mapping"],
+                families=["recon-phase:dns"],
+            )
+        )
+    return findings
+
+
+def _handle_hakrawler(target: str, output: str) -> List[RawFinding]:
+    findings: List[RawFinding] = []
+    interesting = [
+        "admin",
+        "login",
+        "swagger",
+        "graphql",
+        "api",
+        ".git",
+        "backup",
+        "secret",
+        "staff",
+    ]
+    for line in output.splitlines():
+        clean = _strip_ansi(line).strip()
+        if not clean.startswith("http"):
+            continue
+        sev = "INFO"
+        lowered = clean.lower()
+        if any(keyword in lowered for keyword in interesting):
+            sev = "MEDIUM"
+        findings.append(
+            RawFinding(
+                type="Crawled Endpoint",
+                severity=sev,
+                tool="hakrawler",
+                target=target,
+                message=clean,
+                proof=clean,
+                tags=["crawler", "surface-http"],
+                families=["exposure"],
+            )
+        )
+    return findings
+
+
+def _handle_assetfinder(target: str, output: str) -> List[RawFinding]:
+    findings: List[RawFinding] = []
+    for line in output.splitlines():
+        clean = _strip_ansi(line).strip()
+        if not clean or "." not in clean:
+            continue
+        findings.append(
+            RawFinding(
+                type="Discovered Subdomain",
+                severity="INFO",
+                tool="assetfinder",
+                target=target,
+                message=clean,
+                proof=clean,
+                tags=["subdomain", "surface-expansion"],
+                families=["recon-phase:subdomain"],
+            )
+        )
+    return findings
+
+
+def _handle_subfinder(target: str, output: str) -> List[RawFinding]:
+    findings: List[RawFinding] = []
+    for line in output.splitlines():
+        clean = _strip_ansi(line).strip()
+        if not clean or "." not in clean:
+            continue
+        findings.append(
+            RawFinding(
+                type="Discovered Subdomain",
+                severity="INFO",
+                tool="subfinder",
+                target=target,
+                message=clean,
+                proof=clean,
+                tags=["subdomain", "surface-expansion"],
+                families=["recon-phase:subdomain"],
+            )
+        )
+    return findings
+
+
+def _handle_httprobe(target: str, output: str) -> List[RawFinding]:
+    findings: List[RawFinding] = []
+    for line in output.splitlines():
+        clean = _strip_ansi(line).strip()
+        if not clean.startswith("http"):
+            continue
+        findings.append(
+            RawFinding(
+                type="Reachable Service",
+                severity="INFO",
+                tool="httprobe",
+                target=target,
+                message=clean,
+                proof=clean,
+                tags=["surface-http"],
+                families=["exposure"],
+            )
+        )
+    return findings
 
 
 # ----------------------------------------------------------------------
@@ -825,6 +1171,19 @@ _HANDLERS: Dict[str, Callable[[str, str], List[RawFinding]]] = {
     "nmap": _handle_nmap,
     "whatweb": _handle_whatweb,
     "wafw00f": _handle_wafw00f,
+    "httpx": _handle_httpx,
+    "dirsearch": _handle_dirsearch,
+    "gobuster": _handle_gobuster,
+    "feroxbuster": _handle_feroxbuster,
+    "nikto": _handle_nikto,
+    "masscan": _handle_masscan,
+    "naabu": _handle_naabu,
+    "dnsx": _handle_dnsx,
+    "hakrevdns": _handle_hakrevdns,
+    "hakrawler": _handle_hakrawler,
+    "assetfinder": _handle_assetfinder,
+    "subfinder": _handle_subfinder,
+    "httprobe": _handle_httprobe,
 }
 
 
