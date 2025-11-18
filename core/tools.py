@@ -1,5 +1,5 @@
 # core/tools.py
-# Definitions and helpers for external recon tools
+# Full dictionary-based tool registry for AraUltra
 
 import shutil
 import socket
@@ -8,25 +8,13 @@ from copy import deepcopy
 from pathlib import Path
 from urllib.parse import urlparse, urlunparse
 from typing import Dict, List
-from .tool_shims.nmap import NmapScan
-from .tool_shims.subfinder import Subfinder
-from .tool_shims.httpx import Httpx
 
-TOOLS = {
-    "nmap": NmapScan(),
-    "subfinder": Subfinder(),
-    "httpx": Httpx(),
-    "hakrevdns": None,  # Placeholder for now
-    
-    # Add more tools here as needed
-}
-
-ToolDef = Dict[str, object]
-
+# -------------------------------------------------------------------
+# File paths
+# -------------------------------------------------------------------
 BASE_DIR = Path(__file__).resolve().parents[1]
 WORDLIST_DIR = BASE_DIR / "assets" / "wordlists"
 DEFAULT_WORDLIST = WORDLIST_DIR / "common.txt"
-
 
 def _wordlist_path(name: str = "common.txt") -> str:
     candidate = WORDLIST_DIR / name
@@ -36,11 +24,13 @@ def _wordlist_path(name: str = "common.txt") -> str:
         return str(DEFAULT_WORDLIST.resolve())
     return str(candidate.resolve())
 
-
 COMMON_WORDLIST = _wordlist_path("common.txt")
+
 _SHIM_LAUNCH = [sys.executable, "-m", "core.tool_shims"]
 
-
+# -------------------------------------------------------------------
+# Target normalization helpers
+# -------------------------------------------------------------------
 def _ensure_url(target: str) -> str:
     target = (target or "").strip()
     if not target:
@@ -52,16 +42,13 @@ def _ensure_url(target: str) -> str:
         parsed = urlparse(f"{parsed.scheme or 'https'}://{parsed.path}")
     return urlunparse(parsed)
 
-
 def _extract_host(target: str) -> str:
     parsed = urlparse(_ensure_url(target))
     host = parsed.hostname or target
     return host.lower().rstrip(".")
 
-
 def _extract_domain(target: str) -> str:
     return _extract_host(target)
-
 
 def _extract_ip(target: str) -> str:
     host = _extract_host(target)
@@ -69,7 +56,6 @@ def _extract_ip(target: str) -> str:
         return socket.gethostbyname(host)
     except socket.gaierror:
         return host
-
 
 def _normalize_target(raw: str, mode: str) -> str:
     if mode == "host":
@@ -80,21 +66,41 @@ def _normalize_target(raw: str, mode: str) -> str:
         return _extract_ip(raw)
     return _ensure_url(raw)
 
-
-TOOLS: Dict[str, ToolDef] = {
+# -------------------------------------------------------------------
+# DICTIONARY-BASED TOOL DEFINITIONS
+# -------------------------------------------------------------------
+TOOLS: Dict[str, Dict] = {
     "nmap": {
-        "label": "Nmap (service/port scan)",
-        # Use a faster profile with sane defaults so the UI doesn't block forever
+        "label": "Nmap (fast service/port scan)",
         "cmd": [
-            "nmap",
-            "-sV",
-            "-T4",
-            "-F",
+            "nmap", "-sV", "-T4", "-F",
             "--open",
             "--host-timeout", "60s",
             "-n",
             "{target}",
         ],
+        "aggressive": False,
+        "target_type": "host",
+    },
+    "subfinder": {
+        "label": "subfinder (subdomain discovery)",
+        "cmd": ["subfinder", "-silent", "-d", "{target}"],
+        "aggressive": False,
+        "target_type": "domain",
+    },
+    "httpx": {
+        "label": "httpx (HTTP probing)",
+        "cmd": [
+            "httpx", "-silent",
+            "-title", "-status-code", "-tech-detect",
+            "-u", "{target}"
+        ],
+        "aggressive": False,
+        "target_type": "url",
+    },
+    "hakrevdns": {
+        "label": "hakrevdns (reverse DNS)",
+        "cmd": [*_SHIM_LAUNCH, "hakrevdns", "{target}"],
         "aggressive": False,
         "target_type": "host",
     },
@@ -125,7 +131,8 @@ TOOLS: Dict[str, ToolDef] = {
     },
     "nuclei": {
         "label": "nuclei (vulnerability templates)",
-        "cmd": ["nuclei", "-target", "{target}", "-severity", "low,medium,high,critical"],
+        "cmd": ["nuclei", "-target", "{target}", "-severity",
+                "low,medium,high,critical"],
         "aggressive": True,
         "target_type": "url",
     },
@@ -137,7 +144,8 @@ TOOLS: Dict[str, ToolDef] = {
     },
     "gobuster": {
         "label": "Gobuster (directory brute force)",
-        "cmd": ["gobuster", "dir", "-u", "{target}", "-w", COMMON_WORDLIST],
+        "cmd": ["gobuster", "dir", "-u", "{target}", "-w",
+                COMMON_WORDLIST],
         "aggressive": True,
         "target_type": "url",
     },
@@ -153,12 +161,6 @@ TOOLS: Dict[str, ToolDef] = {
         "aggressive": True,
         "target_type": "url",
     },
-    "subfinder": {
-        "label": "subfinder (subdomain discovery)",
-        "cmd": ["subfinder", "-silent", "-d", "{target}"],
-        "aggressive": False,
-        "target_type": "domain",
-    },
     "assetfinder": {
         "label": "assetfinder (attack surface discovery)",
         "cmd": ["assetfinder", "-subs-only", "{target}"],
@@ -168,17 +170,14 @@ TOOLS: Dict[str, ToolDef] = {
     },
     "hakrawler": {
         "label": "hakrawler (endpoint crawler)",
-        "cmd": ["bash", "-lc", "printf '%s\\n' {target} | hakrawler -subs -u"],
+        "cmd": [
+            "bash", "-lc",
+            "printf '%s\\n' {target} | hakrawler -subs -u"
+        ],
         "aggressive": False,
         "target_type": "url",
         "binary": "hakrawler",
         "fallback": True,
-    },
-    "httpx": {
-        "label": "httpx (HTTP probing)",
-        "cmd": ["httpx", "-silent", "-title", "-status-code", "-tech-detect", "-u", "{target}"],
-        "aggressive": False,
-        "target_type": "url",
     },
     "naabu": {
         "label": "naabu (fast port scan)",
@@ -188,7 +187,10 @@ TOOLS: Dict[str, ToolDef] = {
     },
     "dnsx": {
         "label": "dnsx (DNS resolver)",
-        "cmd": ["bash", "-lc", "printf '%s\\n' {target} | dnsx -silent -resp -a -aaaa"],
+        "cmd": [
+            "bash", "-lc",
+            "printf '%s\\n' {target} | dnsx -silent -resp -a -aaaa"
+        ],
         "aggressive": False,
         "target_type": "domain",
         "binary": "dnsx",
@@ -229,7 +231,10 @@ TOOLS: Dict[str, ToolDef] = {
     },
     "httprobe": {
         "label": "httprobe (HTTP availability)",
-        "cmd": ["bash", "-lc", "printf '%s\\n' {target} | httprobe"],
+        "cmd": [
+            "bash", "-lc",
+            "printf '%s\\n' {target} | httprobe"
+        ],
         "aggressive": False,
         "target_type": "host",
         "binary": "httprobe",
@@ -249,48 +254,38 @@ TOOLS: Dict[str, ToolDef] = {
         "target_type": "url",
         "fallback": True,
     },
-    "hakrevdns": {
-        "label": "hakrevdns (reverse DNS)",
-        "cmd": [*_SHIM_LAUNCH, "hakrevdns", "{target}"],
-        "aggressive": False,
-        "target_type": "host",
-    },
 }
 
-
-def get_installed_tools() -> Dict[str, ToolDef]:
-    """
-    Return only tools whose base executable exists in PATH.
-    """
+# -------------------------------------------------------------------
+# API exposed to the scanner/engine
+# -------------------------------------------------------------------
+def get_installed_tools() -> Dict[str, Dict]:
     installed = {}
     for name, tdef in TOOLS.items():
         cmd = tdef["cmd"]
         exe = tdef.get("binary") or cmd[0]
         if shutil.which(exe):
             installed[name] = tdef
-            continue
-        if tdef.get("fallback"):
-            fallback_def = deepcopy(tdef)
-            fallback_def["cmd"] = [*_SHIM_LAUNCH, name, "{target}"]
-            installed[name] = fallback_def
+        elif tdef.get("fallback"):
+            fb = deepcopy(tdef)
+            fb["cmd"] = [*_SHIM_LAUNCH, name, "{target}"]
+            installed[name] = fb
     return installed
 
-
-def get_tool_command(name: str, target: str, override: ToolDef | None = None) -> List[str]:
-    """
-    Expand the tool command template with the given target.
-    """
+def get_tool_command(name: str, target: str, override: Dict | None = None) -> List[str]:
     tdef = override or TOOLS[name]
-    normalized_target = _normalize_target(target, tdef.get("target_type", "url"))
+    normalized = _normalize_target(target, tdef.get("target_type", "url"))
     cmd: List[str] = []
     for part in tdef["cmd"]:
         if "{target}" in part:
-            cmd.append(part.replace("{target}", normalized_target))
+            cmd.append(part.replace("{target}", normalized))
         else:
             cmd.append(part)
     return cmd
 
-
+# -------------------------------------------------------------------
+# Callback plumbing
+# -------------------------------------------------------------------
 from .task_router import TaskRouter
 
 def tool_callback_factory(tool_name: str):

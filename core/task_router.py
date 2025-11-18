@@ -1,3 +1,6 @@
+# core/task_router.py
+# Central event bus connecting tools, AI engine, and UI panels.
+
 from PyQt6.QtCore import QObject, pyqtSignal
 
 from .ai_engine import AIEngine
@@ -8,7 +11,7 @@ from .killchain_store import killchain_store
 class TaskRouter(QObject):
     """
     Core event bus for AraUltra.
-    All tool output → AIEngine → FindingsStore → KillchainStore → UI
+    All tool output → AIEngine → FindingsStore / Killchain / Evidence → UI
     """
 
     ui_event = pyqtSignal(str, dict)
@@ -41,7 +44,8 @@ class TaskRouter(QObject):
     # -------------------------------------------------------
     def register_ui_callback(self, event_type: str, func):
         """
-        UI files register for updates (e.g., findings_update, evidence_update)
+        UI files register for updates (e.g., findings_update, evidence_update,
+        ai_live_comment, etc.)
         """
         if event_type not in self._ui_callbacks:
             self._ui_callbacks[event_type] = []
@@ -58,7 +62,14 @@ class TaskRouter(QObject):
     # -------------------------------------------------------
     # Primary tool output handler
     # -------------------------------------------------------
-    def handle_tool_output(self, tool_name: str, stdout: str, stderr: str, rc: int, metadata: dict):
+    def handle_tool_output(
+        self,
+        tool_name: str,
+        stdout: str,
+        stderr: str,
+        rc: int,
+        metadata: dict,
+    ):
         """
         Called by ExecutionEngine via tool_callback_factory.
         Runs AI analysis and updates stores + UI panels.
@@ -69,18 +80,27 @@ class TaskRouter(QObject):
             stdout=stdout,
             stderr=stderr,
             rc=rc,
-            metadata=metadata
+            metadata=metadata,
         )
 
-        # Update dashboard & findings
+        # Update dashboard & findings viewers
         self.emit_ui_event("evidence_update", {
             "tool": tool_name,
             "summary": result["summary"],
-            "evidence_id": result["evidence_id"]
+            "evidence_id": result["evidence_id"],
         })
 
         self.emit_ui_event("findings_update", {
             "tool": tool_name,
             "findings": result["findings"],
-            "killchain_phases": result["killchain_phases"]
+            "killchain_phases": result["killchain_phases"],
         })
+
+        # Live AI commentary stream
+        live_comment = result.get("live_comment")
+        if live_comment:
+            self.emit_ui_event("ai_live_comment", {
+                "tool": tool_name,
+                "target": metadata.get("target") if metadata else None,
+                "comment": live_comment,
+            })
