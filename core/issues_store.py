@@ -28,9 +28,18 @@ class IssuesStore(QObject):
     def get_all(self):
         return list(self._issues)
 
+
     def clear(self):
         self._issues = []
-        self.issues_changed.emit()
+        if hasattr(self.issues_changed, 'emit'):
+            self.issues_changed.emit()
+    
+    def replace_all(self, issues: list):
+        """Replace all issues with a new list"""
+        self._issues = list(issues)
+        if hasattr(self.issues_changed, 'emit'):
+            self.issues_changed.emit()
+
 
 
 issues_store = IssuesStore()

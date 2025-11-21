@@ -124,8 +124,27 @@ class ScannerEngine:
                 if not done:
                     await asyncio.sleep(0.05)
             
+            
             while not self._queue.empty():
                 yield self._queue.get_nowait()
+            
+            # CRITICAL FIX: Aggregate all findings from tool results
+            all_findings: List[dict] = []
+            for tool_name, result in self._results_map.items():
+                if isinstance(result, list):
+                    all_findings.extend(result)
+            
+            # Normalize and deduplicate findings
+            normalized = self._normalize_findings(all_findings)
+            self._last_results = normalized
+            
+            # Build recon edges and update stores
+            recon_edges = self._build_recon_edges(normalized)
+            self._record_recon_edges(recon_edges)
+            enriched_count, edge_count = self._refresh_enrichment()
+            
+            yield f"[scanner] Processed {len(normalized)} findings, {enriched_count} issues, {edge_count} killchain edges"
+
 
     def queue_task(self, tool: str, args: List[str] = None):
         """
