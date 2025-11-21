@@ -31,7 +31,11 @@ class TestAutonomousActions(unittest.IsolatedAsyncioTestCase):
 
     @patch('core.ai_engine.OllamaClient')
     @patch('core.scanner_engine.ScannerEngine._run_tool_task')
-    async def test_autonomous_loop(self, mock_run_tool, MockOllamaClient):
+    @patch('core.scan_orchestrator.TaskRouter')
+    async def test_autonomous_loop(self, MockTaskRouter, mock_run_tool, MockOllamaClient):
+        # Setup Mock TaskRouter
+        mock_router_instance = MockTaskRouter.instance.return_value
+        
         # Setup Mock AI Client
         mock_client = MockOllamaClient.return_value
         mock_client.check_connection.return_value = True
