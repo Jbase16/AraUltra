@@ -93,6 +93,7 @@ class TaskRouter(QObject):
         self.emit_ui_event("findings_update", {
             "tool": tool_name,
             "findings": result["findings"],
+            "next_steps": result.get("next_steps", []),
             "killchain_phases": result["killchain_phases"],
         })
 

@@ -83,69 +83,56 @@ class ScannerEngine:
             pending = list(tools_to_run)
             results_map: Dict[str, List[dict] | Exception] = {}
 
-            while pending and len(running) < self.MAX_CONCURRENT_TOOLS:
-                tool = pending.pop(0)
-                running[tool] = asyncio.create_task(self._run_tool_task(tool, target, queue))
-                await queue.put(f"[scanner] Started {tool} (batch launch)")
+            # Expose queue for dynamic additions
+            self._pending_tasks = pending
+            self._running_tasks = running
+            self._queue = queue
+            self._results_map = results_map
 
-            while running:
-                done, _ = await asyncio.wait(list(running.values()), timeout=0.2)
-                while not queue.empty():
-                    yield queue.get_nowait()
+            while (self._pending_tasks or self._running_tasks) and len(self._running_tasks) < self.MAX_CONCURRENT_TOOLS:
+                # Fill slots
+                while self._pending_tasks and len(self._running_tasks) < self.MAX_CONCURRENT_TOOLS:
+                    task_def = self._pending_tasks.pop(0)
+                    # Handle both simple strings (legacy) and dicts (dynamic args)
+                    if isinstance(task_def, str):
+                         tool = task_def
+                         args = None
+                    else:
+                         tool = task_def["tool"]
+                         args = task_def.get("args")
+
+                    self._running_tasks[tool] = asyncio.create_task(self._run_tool_task(tool, target, self._queue, args))
+                    await self._queue.put(f"[scanner] Started {tool} (dynamic launch)")
+
+                if not self._running_tasks:
+                     break
+
+                done, _ = await asyncio.wait(list(self._running_tasks.values()), timeout=0.2)
+                while not self._queue.empty():
+                    yield self._queue.get_nowait()
+                
                 for finished in done:
-                    tool_name = next((name for name, t in running.items() if t is finished), None)
+                    tool_name = next((name for name, t in self._running_tasks.items() if t is finished), None)
                     if tool_name:
                         try:
-                            results_map[tool_name] = finished.result()
+                            self._results_map[tool_name] = finished.result()
                         except Exception as exc:  # pragma: no cover
-                            results_map[tool_name] = exc
-                            await queue.put(f"[{tool_name}] task error: {exc}")
-                        del running[tool_name]
-                        if pending:
-                            next_tool = pending.pop(0)
-                            running[next_tool] = asyncio.create_task(self._run_tool_task(next_tool, target, queue))
-                            await queue.put(f"[scanner] Started {next_tool} (batch launch)")
+                            self._results_map[tool_name] = exc
+                            await self._queue.put(f"[{tool_name}] task error: {exc}")
+                        del self._running_tasks[tool_name]
+                
                 if not done:
                     await asyncio.sleep(0.05)
-            while not queue.empty():
-                yield queue.get_nowait()
+            
+            while not self._queue.empty():
+                yield self._queue.get_nowait()
 
-            for tool in tools_to_run:
-                result = results_map.get(tool)
-                if result is None:
-                    continue
-                if isinstance(result, Exception):
-                    yield f"[{tool}] task error: {result}"
-                    continue
-                normalized = self._normalize_findings(result)
-                if normalized:
-                    findings_store.bulk_add(normalized)
-                    self._last_results.extend(normalized)
-                    yield f"[scanner] Recorded {len(normalized)} finding(s) from {tool}."
-                    self._refresh_enrichment()
-
-        phase_logs: List[str] = []
-        phase_runner = PhaseRunner(target, phase_logs.append)
-        phase_results = await phase_runner.run_all_phases()
-        for msg in phase_logs:
-            yield msg
-
-        for phase_name, phase_findings in phase_results.items():
-            normalized_phase = self._normalize_findings(phase_findings)
-            if not normalized_phase:
-                continue
-            findings_store.bulk_add(normalized_phase)
-            self._last_results.extend(normalized_phase)
-            yield f"[phase] {phase_name} produced {len(normalized_phase)} finding(s)."
-            recon_edges = self._build_recon_edges(normalized_phase)
-            if recon_edges:
-                self._record_recon_edges(recon_edges)
-            self._refresh_enrichment()
-
-        issues_count, edge_count = self._refresh_enrichment()
-        yield f"[rules] {issues_count} correlated issue(s)."
-        yield f"[killchain] {edge_count} relationship edge(s) generated."
-        yield "[scanner] Scan run complete."
+    def queue_task(self, tool: str, args: List[str] = None):
+        """
+        Dynamically add a task to the running scan.
+        """
+        if hasattr(self, "_pending_tasks"):
+            self._pending_tasks.append({"tool": tool, "args": args})
 
     async def run_all(self, target: str):
         """
@@ -245,9 +232,17 @@ class ScannerEngine:
         killchain_store.replace_all(combined_edges)
         return len(enriched), len(combined_edges)
 
-    async def _run_tool_task(self, tool: str, target: str, queue: asyncio.Queue[str]) -> List[dict]:
+    async def _run_tool_task(self, tool: str, target: str, queue: asyncio.Queue[str], custom_args: List[str] = None) -> List[dict]:
         meta_override = self._installed_meta.get(tool)
-        cmd = get_tool_command(tool, target, meta_override)
+        
+        if custom_args:
+            # Use custom args directly if provided (for autonomous actions)
+            cmd = [tool] + custom_args
+            # Replace {target} placeholder if present in custom args
+            cmd = [arg.replace("{target}", target) for arg in cmd]
+        else:
+            cmd = get_tool_command(tool, target, meta_override)
+            
         await queue.put(f"--- Running {tool} ---")
         try:
             proc = await asyncio.create_subprocess_exec(
