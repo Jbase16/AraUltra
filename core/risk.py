@@ -5,7 +5,15 @@ from __future__ import annotations
 from collections import defaultdict
 from typing import Dict
 
-from PyQt6.QtCore import QObject, pyqtSignal
+try:
+    from PyQt6.QtCore import QObject, pyqtSignal
+except ImportError:
+    class QObject:
+        def __init__(self): pass
+    class pyqtSignal:
+        def __init__(self, *args): pass
+        def emit(self, *args): pass
+        def connect(self, *args): pass
 
 from core.issues_store import issues_store
 
@@ -20,12 +28,21 @@ SEVERITY_WEIGHTS = {
 
 
 class RiskEngine(QObject):
-    scores_changed = pyqtSignal()
+    try:
+        scores_changed = pyqtSignal()
+    except NameError:
+        scores_changed = pyqtSignal()
 
     def __init__(self):
         super().__init__()
         self._scores: Dict[str, float] = {}
-        issues_store.issues_changed.connect(self.recalculate)
+        if not hasattr(self, 'scores_changed'):
+            self.scores_changed = pyqtSignal()
+        
+        # Only connect if the signal has a connect method (dummy or real)
+        if hasattr(issues_store.issues_changed, 'connect'):
+            issues_store.issues_changed.connect(self.recalculate)
+            
         self.recalculate()
 
     def recalculate(self):
@@ -37,7 +54,8 @@ class RiskEngine(QObject):
             weight = SEVERITY_WEIGHTS.get(severity, 0.5)
             scores[asset] += weight
         self._scores = dict(scores)
-        self.scores_changed.emit()
+        if hasattr(self.scores_changed, 'emit'):
+            self.scores_changed.emit()
 
     def get_scores(self) -> Dict[str, float]:
         return dict(self._scores)

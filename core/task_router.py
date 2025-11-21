@@ -1,7 +1,17 @@
 # core/task_router.py
 # Central event bus connecting tools, AI engine, and UI panels.
 
-from PyQt6.QtCore import QObject, pyqtSignal
+try:
+    from PyQt6.QtCore import QObject, pyqtSignal
+except ImportError:
+    class QObject:
+        def __init__(self): pass
+    class pyqtSignal:
+        def __init__(self, *args): pass
+        def emit(self, *args): pass
+
+import threading
+from typing import Dict, Any
 
 from .ai_engine import AIEngine
 from .findings_store import findings_store
@@ -10,25 +20,33 @@ from .killchain_store import killchain_store
 
 class TaskRouter(QObject):
     """
-    Core event bus for AraUltra.
-    All tool output → AIEngine → FindingsStore / Killchain / Evidence → UI
+    Central event bus for routing messages between Scanner, AI, and UI.
     """
-
-    ui_event = pyqtSignal(str, dict)
+    # Signals
+    log_message = pyqtSignal(str)
+    scan_started = pyqtSignal(str)
+    scan_finished = pyqtSignal()
+    findings_update = pyqtSignal(dict)
+    ai_commentary = pyqtSignal(str)
 
     _instance = None
 
-    @staticmethod
-    def instance():
-        if TaskRouter._instance is None:
-            TaskRouter._instance = TaskRouter()
-        return TaskRouter._instance
+    @classmethod
+    def instance(cls):
+        if cls._instance is None:
+            cls._instance = cls()
+        return cls._instance
 
     # -------------------------------------------------------
     # Initialization
     # -------------------------------------------------------
     def __init__(self):
         super().__init__()
+        self._lock = threading.Lock()
+        # Ensure signals exist if QObject init didn't set them (dummy mode)
+        for sig in ['log_message', 'scan_started', 'scan_finished', 'findings_update', 'ai_commentary']:
+            if not hasattr(self, sig):
+                setattr(self, sig, pyqtSignal())
 
         self.ai = AIEngine.instance()
 
@@ -38,6 +56,26 @@ class TaskRouter(QObject):
 
         # UI callbacks registry
         self._ui_callbacks = {}
+
+    def emit_log(self, message: str):
+        if hasattr(self.log_message, 'emit'):
+            self.log_message.emit(message)
+
+    def emit_scan_start(self, target: str):
+        if hasattr(self.scan_started, 'emit'):
+            self.scan_started.emit(target)
+
+    def emit_scan_finish(self):
+        if hasattr(self.scan_finished, 'emit'):
+            self.scan_finished.emit()
+
+    def emit_findings_update(self, data: Dict[str, Any]):
+        if hasattr(self.findings_update, 'emit'):
+            self.findings_update.emit(data)
+
+    def emit_ai_commentary(self, text: str):
+        if hasattr(self.ai_commentary, 'emit'):
+            self.ai_commentary.emit(text)
 
     # -------------------------------------------------------
     # UI callback registration

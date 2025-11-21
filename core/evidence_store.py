@@ -1,4 +1,11 @@
-from PyQt6.QtCore import QObject, pyqtSignal
+try:
+    from PyQt6.QtCore import QObject, pyqtSignal
+except ImportError:
+    class QObject:
+        def __init__(self): pass
+    class pyqtSignal:
+        def __init__(self, *args): pass
+        def emit(self, *args): pass
 
 
 class EvidenceStore(QObject):
@@ -7,7 +14,10 @@ class EvidenceStore(QObject):
     Emits signals for UI updates.
     """
 
-    evidence_changed = pyqtSignal()
+    try:
+        evidence_changed = pyqtSignal()
+    except NameError:
+        evidence_changed = pyqtSignal()
 
     _instance = None
 
@@ -23,6 +33,8 @@ class EvidenceStore(QObject):
         super().__init__()
         self._evidence = {}
         self._counter = 0
+        if not hasattr(self, 'evidence_changed'):
+            self.evidence_changed = pyqtSignal()
 
     def add_evidence(self, tool: str, raw_output: str, metadata: dict):
         self._counter += 1
@@ -36,7 +48,8 @@ class EvidenceStore(QObject):
             "findings": []
         }
 
-        self.evidence_changed.emit()
+        if hasattr(self.evidence_changed, 'emit'):
+            self.evidence_changed.emit()
         return eid
 
     def update_evidence(self, evidence_id: int, summary=None, findings=None):
@@ -48,7 +61,8 @@ class EvidenceStore(QObject):
         if findings:
             self._evidence[evidence_id]["findings"] = findings
 
-        self.evidence_changed.emit()
+        if hasattr(self.evidence_changed, 'emit'):
+            self.evidence_changed.emit()
 
     def get_all(self):
         return dict(self._evidence)
