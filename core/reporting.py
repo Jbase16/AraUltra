@@ -22,6 +22,10 @@ class ReportBundle:
     json_path: str
 
 
+from core.ai_engine import AIEngine
+
+# ...
+
 def create_report_bundle(base_dir: str = "reports") -> ReportBundle:
     """
     Export findings/issues/killchain data plus reasoning summary into markdown + JSON files.
@@ -47,7 +51,16 @@ def create_report_bundle(base_dir: str = "reports") -> ReportBundle:
         "killchain_edges": edges,
     }
 
-    markdown = _render_markdown(summary, findings, issues)
+    # Generate AI Narrative Report if available
+    ai_report = ""
+    try:
+        ai_engine = AIEngine.instance()
+        if ai_engine.client:
+            ai_report = ai_engine.generate_report_narrative(findings, issues)
+    except Exception as e:
+        ai_report = f"AI Report Generation Failed: {e}"
+
+    markdown = _render_markdown(summary, findings, issues, ai_report)
 
     md_path = os.path.join(bundle_dir, "report.md")
     json_path = os.path.join(bundle_dir, "report.json")
@@ -61,7 +74,7 @@ def create_report_bundle(base_dir: str = "reports") -> ReportBundle:
     return ReportBundle(folder=bundle_dir, markdown_path=md_path, json_path=json_path)
 
 
-def _render_markdown(summary: Dict, findings: List[dict], issues: List[dict]) -> str:
+def _render_markdown(summary: Dict, findings: List[dict], issues: List[dict], ai_report: str = "") -> str:
     lines = [
         "# AraUltra Report Bundle",
         "",
@@ -69,8 +82,17 @@ def _render_markdown(summary: Dict, findings: List[dict], issues: List[dict]) ->
         f"- Total Findings: {summary['findings_count']}",
         f"- Correlated Issues: {summary['issues_count']}",
         "",
-        "## Top Assets by Risk",
     ]
+    
+    if ai_report:
+        lines.append("## Executive Summary (AI Generated)")
+        lines.append(ai_report)
+        lines.append("")
+        lines.append("---")
+        lines.append("")
+
+    lines.append("## Top Assets by Risk")
+    # ... (rest of the function)
 
     risk_scores = summary["risk_scores"]
     if risk_scores:

@@ -209,6 +209,42 @@ class AIEngine:
             logger.error("Failed to parse LLM JSON response")
             return {"findings": [], "next_steps": []}
 
+    def generate_report_narrative(self, findings: List[Dict], issues: List[Dict]) -> str:
+        """
+        Generates a professional executive summary based on findings and issues.
+        """
+        if not self.client:
+            return "AI Client not initialized. Cannot generate narrative."
+
+        # Summarize data to fit context window
+        summary_text = f"Total Findings: {len(findings)}\nTotal Issues: {len(issues)}\n\n"
+        
+        if issues:
+            summary_text += "Key Issues:\n"
+            for i in issues[:10]: # Top 10 issues
+                summary_text += f"- {i.get('title')} ({i.get('severity')}): {i.get('description')}\n"
+        elif findings:
+            summary_text += "Key Findings:\n"
+            for f in findings[:20]: # Top 20 findings
+                summary_text += f"- {f.get('type')} ({f.get('severity')}): {f.get('value')}\n"
+        else:
+            return "No significant findings to report."
+
+        system_prompt = (
+            "You are a lead penetration tester writing an executive summary for a client. "
+            "Write a professional, concise narrative summarizing the security posture based on the findings provided. "
+            "Highlight critical risks and provide high-level recommendations. "
+            "Do not list every single finding; focus on the impact and the 'story' of the assessment. "
+            "Use Markdown formatting."
+        )
+
+        user_prompt = (
+            f"Assessment Data:\n{summary_text}\n\n"
+            "Write the Executive Summary:"
+        )
+
+        return self.client.generate(user_prompt, system_prompt) or "Failed to generate report."
+
     # ---------------------------------------------------------
     # Legacy / Fallback Logic
     # ---------------------------------------------------------
