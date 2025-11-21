@@ -33,6 +33,5 @@ class KillchainStore(QObject):
     def get_all(self):
         return list(self._edges)
 
-
 # Singleton
 killchain_store = KillchainStore()
