@@ -259,16 +259,13 @@ TOOLS: Dict[str, Dict] = {
 # API exposed to the scanner/engine
 # -------------------------------------------------------------------
 def get_installed_tools() -> Dict[str, Dict]:
+    """Return only tools that are genuinely installed in PATH - no shims/fallbacks"""
     installed = {}
     for name, tdef in TOOLS.items():
         cmd = tdef["cmd"]
         exe = tdef.get("binary") or cmd[0]
         if shutil.which(exe):
             installed[name] = tdef
-        elif tdef.get("fallback"):
-            fb = deepcopy(tdef)
-            fb["cmd"] = [*_SHIM_LAUNCH, name, "{target}"]
-            installed[name] = fb
     return installed
 
 def get_tool_command(name: str, target: str, override: Dict | None = None) -> List[str]:
