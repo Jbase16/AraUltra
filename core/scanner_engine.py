@@ -89,8 +89,9 @@ class ScannerEngine:
             self._queue = queue
             self._results_map = results_map
 
-            while (self._pending_tasks or self._running_tasks) and len(self._running_tasks) < self.MAX_CONCURRENT_TOOLS:
-                # Fill slots
+            # FIXED: Wait for ALL tasks to complete, not just until slots fill
+            while self._pending_tasks or self._running_tasks:
+                # Fill available slots
                 while self._pending_tasks and len(self._running_tasks) < self.MAX_CONCURRENT_TOOLS:
                     task_def = self._pending_tasks.pop(0)
                     # Handle both simple strings (legacy) and dicts (dynamic args)
@@ -116,7 +117,7 @@ class ScannerEngine:
                     if tool_name:
                         try:
                             self._results_map[tool_name] = finished.result()
-                        except Exception as exc:  # pragma: no cover
+                        except Exception as exc: # pragma: no cover
                             self._results_map[tool_name] = exc
                             await self._queue.put(f"[{tool_name}] task error: {exc}")
                         del self._running_tasks[tool_name]

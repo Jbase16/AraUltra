@@ -91,9 +91,9 @@ TOOLS: Dict[str, Dict] = {
     "httpx": {
         "label": "httpx (HTTP probing)",
         "cmd": [
-            "httpx", "-silent",
-            "-title", "-status-code", "-tech-detect",
-            "-u", "{target}"
+            "httpx", 
+            "-u", "{target}",
+            "-silent"
         ],
         "aggressive": False,
         "target_type": "url",
