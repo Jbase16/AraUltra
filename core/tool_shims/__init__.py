@@ -220,7 +220,8 @@ def shim_wfuzz(target: str) -> None:
     for payload in payloads:
         query = base_query + [("fuzz", payload)]
         new_query = urlencode(query, doseq=True)
-        fuzzed = urlunparse((parsed.scheme, parsed.netloc, parsed.path or "/", new_query, parsed.fragment))
+        # urlunparse expects (scheme, netloc, path, params, query, fragment)
+        fuzzed = urlunparse((parsed.scheme, parsed.netloc, parsed.path or "/", parsed.params, new_query, parsed.fragment))
         status, body, _ = _safe_request(fuzzed)
         length = len(body)
         print(f"[wfuzz-shim] {fuzzed} -> status={status} len={length}")

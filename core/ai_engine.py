@@ -41,12 +41,12 @@ class OllamaClient:
                 data=data, 
                 headers={'Content-Type': 'application/json'}
             )
-            with urllib.request.urlopen(req, timeout=30) as response:
+            with urllib.request.urlopen(req, timeout=60) as response:
                 if response.status == 200:
                     result = json.loads(response.read().decode('utf-8'))
                     return result.get('response')
-        except Exception as e:
-            logger.error(f"Ollama API error: {e}")
+        except urllib.error.URLError as e:
+            logger.error(f"Ollama API timeout or connection error: {e}")
             return None
         return None
 
@@ -214,18 +214,18 @@ class AIEngine:
         Generates a professional executive summary based on findings and issues.
         """
         if not self.client:
-            return "AI Client not initialized. Cannot generate narrative."
+            return self._generate_fallback_summary(findings, issues)
 
         # Summarize data to fit context window
         summary_text = f"Total Findings: {len(findings)}\nTotal Issues: {len(issues)}\n\n"
         
         if issues:
             summary_text += "Key Issues:\n"
-            for i in issues[:10]: # Top 10 issues
+            for i in issues[:10]:  # Top 10 issues
                 summary_text += f"- {i.get('title')} ({i.get('severity')}): {i.get('description')}\n"
         elif findings:
             summary_text += "Key Findings:\n"
-            for f in findings[:20]: # Top 20 findings
+            for f in findings[:20]:  # Top 20 findings
                 summary_text += f"- {f.get('type')} ({f.get('severity')}): {f.get('value')}\n"
         else:
             return "No significant findings to report."
@@ -243,7 +243,35 @@ class AIEngine:
             "Write the Executive Summary:"
         )
 
-        return self.client.generate(user_prompt, system_prompt) or "Failed to generate report."
+        try:
+            result = self.client.generate(user_prompt, system_prompt)
+            return result if result else self._generate_fallback_summary(findings, issues)
+        except Exception as e:
+            logger.error(f"Report generation failed: {e}")
+            return self._generate_fallback_summary(findings, issues)
+    
+    def _generate_fallback_summary(self, findings: List[Dict], issues: List[Dict]) -> str:
+        """Generate a basic summary when AI is unavailable"""
+        summary = "# Security Assessment Summary\n\n"
+        summary += f"**Total Findings:** {len(findings)}\n"
+        summary += f"**Total Issues:** {len(issues)}\n\n"
+        
+        if issues:
+            summary += "## Key Issues Detected\n\n"
+            for issue in issues[:10]:
+                summary += f"- **[{issue.get('severity')}]** {issue.get('title', 'Unknown')}\n"
+        elif findings:
+            summary += "## Key Findings\n\n"
+            sev_counts = {}
+            for f in findings:
+                sev = f.get('severity', 'UNKNOWN')
+                sev_counts[sev] = sev_counts.get(sev, 0) + 1
+            
+            for sev, count in sorted(sev_counts.items()):
+                summary += f"- {sev}: {count} finding(s)\n"
+        
+        summary += "\n*Note: AI report generation unavailable. This is a basic summary.*\n"
+        return summary
 
     # ---------------------------------------------------------
     # Legacy / Fallback Logic
