@@ -4,10 +4,28 @@
 import shutil
 import socket
 import sys
+import os
 from copy import deepcopy
 from pathlib import Path
 from urllib.parse import urlparse, urlunparse
 from typing import Dict, List
+
+# Ensure common user paths are in PATH for tool discovery
+_EXTRA_PATHS = [
+    os.path.expanduser("~/go/bin"),
+    os.path.expanduser("~/.local/bin"),
+    "/opt/homebrew/bin",
+    "/usr/local/bin",
+]
+
+# Add all Python user bin paths
+import glob
+for p in glob.glob(os.path.expanduser("~/Library/Python/*/bin")):
+    _EXTRA_PATHS.append(p)
+
+for p in _EXTRA_PATHS:
+    if p not in os.environ["PATH"]:
+        os.environ["PATH"] += os.pathsep + p
 
 # -------------------------------------------------------------------
 # File paths
