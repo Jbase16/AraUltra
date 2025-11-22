@@ -26,7 +26,7 @@ def _wordlist_path(name: str = "common.txt") -> str:
 
 COMMON_WORDLIST = _wordlist_path("common.txt")
 
-_SHIM_LAUNCH = [sys.executable, "-m", "core.tool_shims"]
+
 
 # -------------------------------------------------------------------
 # Target normalization helpers
@@ -99,7 +99,7 @@ TOOLS: Dict[str, Dict] = {
     },
     "hakrevdns": {
         "label": "hakrevdns (reverse DNS)",
-        "cmd": [*_SHIM_LAUNCH, "hakrevdns", "{target}"],
+        "cmd": ["hakrevdns", "-d", "{target}"],
         "aggressive": False,
         "target_type": "host",
     },
@@ -120,7 +120,7 @@ TOOLS: Dict[str, Dict] = {
         "cmd": ["testssl", "{target}"],
         "aggressive": False,
         "target_type": "host",
-        "fallback": True,
+        "target_type": "host",
     },
     "whatweb": {
         "label": "whatweb (fingerprint tech stack)",
@@ -137,7 +137,7 @@ TOOLS: Dict[str, Dict] = {
     },
     "nikto": {
         "label": "Nikto (web vulnerability scanner)",
-        "cmd": [*_SHIM_LAUNCH, "nikto", "{target}"],
+        "cmd": ["nikto", "-h", "{target}"],
         "aggressive": True,
         "target_type": "url",
     },
@@ -165,7 +165,7 @@ TOOLS: Dict[str, Dict] = {
         "cmd": ["assetfinder", "-subs-only", "{target}"],
         "aggressive": False,
         "target_type": "domain",
-        "fallback": True,
+        "target_type": "domain",
     },
     "hakrawler": {
         "label": "hakrawler (endpoint crawler)",
@@ -176,7 +176,7 @@ TOOLS: Dict[str, Dict] = {
         "aggressive": False,
         "target_type": "url",
         "binary": "hakrawler",
-        "fallback": True,
+        "binary": "hakrawler",
     },
     "naabu": {
         "label": "naabu (fast port scan)",
@@ -193,7 +193,7 @@ TOOLS: Dict[str, Dict] = {
         "aggressive": False,
         "target_type": "domain",
         "binary": "dnsx",
-        "fallback": True,
+        "binary": "dnsx",
     },
     "masscan": {
         "label": "masscan (very fast port scan)",
@@ -212,21 +212,21 @@ TOOLS: Dict[str, Dict] = {
         "cmd": ["subjack", "-d", "{target}", "-ssl"],
         "aggressive": True,
         "target_type": "domain",
-        "fallback": True,
+        "target_type": "domain",
     },
     "sslyze": {
         "label": "sslyze (TLS scanner)",
         "cmd": ["sslyze", "{target}"],
         "aggressive": False,
         "target_type": "host",
-        "fallback": True,
+        "target_type": "host",
     },
     "wfuzz": {
         "label": "wfuzz (parameter fuzzing)",
         "cmd": ["wfuzz", "-c", "-w", COMMON_WORDLIST, "{target}/FUZZ"],
         "aggressive": True,
         "target_type": "url",
-        "fallback": True,
+        "target_type": "url",
     },
     "httprobe": {
         "label": "httprobe (HTTP availability)",
@@ -237,21 +237,21 @@ TOOLS: Dict[str, Dict] = {
         "aggressive": False,
         "target_type": "host",
         "binary": "httprobe",
-        "fallback": True,
+        "binary": "httprobe",
     },
     "pshtt": {
         "label": "pshtt (HTTPS observatory)",
         "cmd": ["pshtt", "{target}"],
         "aggressive": False,
         "target_type": "domain",
-        "fallback": True,
+        "target_type": "domain",
     },
     "eyewitness": {
         "label": "EyeWitness (screenshot/report)",
         "cmd": ["eyewitness", "--single", "{target}", "--web"],
         "aggressive": False,
         "target_type": "url",
-        "fallback": True,
+        "target_type": "url",
     },
 }
 
