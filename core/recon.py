@@ -477,113 +477,84 @@ class BehavioralRecon:
         parsed = urlparse(url)
         if parsed.scheme != "https" or not parsed.hostname:
             return []
+        
+        from core.tls import TLSAnalyzer
+        
         host = parsed.hostname
         port = parsed.port or 443
-        loop = asyncio.get_running_loop()
-        return await loop.run_in_executor(None, self._tls_probe_sync, url, host, port)
-
-    def _tls_probe_sync(self, target_url: str, host: str, port: int) -> List[dict]:
+        
+        analyzer = TLSAnalyzer(host, port)
+        results = await analyzer.analyze()
+        
         findings: List[dict] = []
-        context = ssl.create_default_context()
-        if not self.verify_ssl:
-            context.check_hostname = False
-            context.verify_mode = ssl.CERT_NONE
-        try:
-            start = time.perf_counter()
-            with socket.create_connection((host, port), timeout=8) as sock:
-                with context.wrap_socket(sock, server_hostname=host) as ssock:
-                    elapsed = (time.perf_counter() - start) * 1000
-                    cipher = ssock.cipher() or ("unknown", "", 0)
-                    protocol = ssock.version() or "unknown"
-                    cert = ssock.getpeercert()
-        except Exception as exc:
-            self.log(f"[behavioral] TLS probe error: {exc}")
-            return findings
+        cert = results.get("certificate", {})
+        
+        if "error" in cert:
+            self.log(f"[behavioral] TLS probe error: {cert['error']}")
+            return []
 
-        cipher_bits = cipher[2] or 0
+        # Basic Handshake Finding
         proof_lines = [
-            f"Protocol: {protocol}",
-            f"Cipher: {cipher[0]} ({cipher_bits} bits) via {cipher[1]}",
-            f"Handshake: {elapsed:.1f} ms",
+            f"Subject: {cert.get('subject')}",
+            f"Issuer: {cert.get('issuer')}",
+            f"Valid: {cert.get('not_valid_before')} to {cert.get('not_valid_after')}",
+            f"Fingerprint: {cert.get('fingerprint_sha256')}",
         ]
-        if cert:
-            subject = dict(x[0] for x in cert.get("subject", []) if x)
-            issuer = dict(x[0] for x in cert.get("issuer", []) if x)
-            proof_lines.append(f"Subject CN: {subject.get('commonName', 'unknown')}")
-            proof_lines.append(f"Issuer CN: {issuer.get('commonName', 'unknown')}")
+        
+        # Add version info
+        versions = results.get("versions", {})
+        supported_versions = [v for v, supported in versions.items() if supported is True]
+        proof_lines.append(f"Supported Versions: {', '.join(supported_versions)}")
+        
         base_proof = "\n".join(proof_lines)
+        
         findings.append(self._make_finding(
-            target_url,
-            "TLS Handshake Profile",
-            "LOW",
-            f"{protocol} / {cipher[0]} ({cipher_bits} bits)",
+            url,
+            "TLS Certificate Details",
+            "INFO",
+            f"Certificate for {cert.get('subject')}",
             base_proof,
-            tags=["tls", "handshake"],
+            tags=["tls", "cert"],
             variant="tls-probe",
             families=["recon-phase:tls-active"],
         ))
 
-        weak_versions = {"TLSv1", "TLSv1.1", "SSLv3", "SSLv2"}
-        if protocol in weak_versions:
+        # Check Expiration
+        status = cert.get("status")
+        if status == "EXPIRED":
             findings.append(self._make_finding(
-                target_url,
+                url,
+                "TLS Certificate Expired",
+                "HIGH",
+                f"Certificate expired on {cert.get('not_valid_after')}",
+                base_proof,
+                tags=["tls", "cert", "expired"],
+                variant="tls-probe",
+                families=["recon-phase:tls-active"],
+            ))
+        elif status == "VALID" and cert.get("days_remaining", 999) < 30:
+             findings.append(self._make_finding(
+                url,
+                "TLS Certificate Expiring Soon",
+                "MEDIUM",
+                f"Certificate expires in {cert.get('days_remaining')} days",
+                base_proof,
+                tags=["tls", "cert", "expiring"],
+                variant="tls-probe",
+                families=["recon-phase:tls-active"],
+            ))
+
+        # Check Weak Versions
+        weak_versions = {"TLSv1", "TLSv1.1", "SSLv3", "SSLv2"}
+        found_weak = [v for v in supported_versions if v in weak_versions]
+        if found_weak:
+            findings.append(self._make_finding(
+                url,
                 "Deprecated TLS Protocol",
                 "HIGH",
-                f"Server negotiated {protocol}",
+                f"Server supports: {', '.join(found_weak)}",
                 base_proof,
                 tags=["tls", "weak-tls"],
-                variant="tls-probe",
-                families=["recon-phase:tls-active"],
-            ))
-
-        if cipher_bits and cipher_bits < 128:
-            findings.append(self._make_finding(
-                target_url,
-                "Weak TLS Cipher Strength",
-                "MEDIUM",
-                f"Cipher {cipher[0]} provides {cipher[2]}-bit security.",
-                base_proof,
-                tags=["tls", "weak-cipher"],
-                variant="tls-probe",
-                families=["recon-phase:tls-active"],
-            ))
-
-        not_after = cert.get("notAfter") if cert else None
-        if not_after:
-            try:
-                expiry = datetime.strptime(not_after, "%b %d %H:%M:%S %Y %Z")
-                remaining = expiry - datetime.utcnow()
-                if remaining.days < 0:
-                    severity = "HIGH"
-                    msg = "TLS certificate expired."
-                elif remaining.days < 30:
-                    severity = "MEDIUM"
-                    msg = f"TLS certificate expires in {remaining.days} days."
-                else:
-                    msg = ""
-                    severity = ""
-                if msg:
-                    findings.append(self._make_finding(
-                        target_url,
-                        "Certificate Expiration Risk",
-                        severity,
-                        msg,
-                        base_proof,
-                        tags=["tls", "cert"],
-                        variant="tls-probe",
-                        families=["recon-phase:tls-active"],
-                    ))
-            except Exception:
-                pass
-
-        if elapsed > 1200:
-            findings.append(self._make_finding(
-                target_url,
-                "Slow TLS Handshake",
-                "LOW",
-                f"TLS handshake took {elapsed:.1f} ms.",
-                base_proof,
-                tags=["tls", "timing"],
                 variant="tls-probe",
                 families=["recon-phase:tls-active"],
             ))
